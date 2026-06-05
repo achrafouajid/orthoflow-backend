@@ -131,6 +131,32 @@ public class TreatmentInvoiceService {
             throw new IllegalStateException("Only DRAFT invoices can be finalized.");
         }
 
+        // Validate stock levels and decimal support before finalizing
+        if (invoice.getConsumablesUsed() != null) {
+            for (TreatmentInvoiceConsumable line : invoice.getConsumablesUsed()) {
+                BigDecimal qtyUsed = line.getActualQuantity();
+                if (qtyUsed != null && qtyUsed.compareTo(BigDecimal.ZERO) > 0) {
+                    StockItem stockItem = stockItemRepository.findById(line.getStockItem().getId())
+                            .orElseThrow(() -> new IllegalArgumentException("Stock item not found: " + line.getStockItem().getId()));
+
+                    // 1. Decimal validation: check if decimal is not supported but qty has a fractional part
+                    if (!stockItem.isDecimalSupported()) {
+                        if (qtyUsed.stripTrailingZeros().scale() > 0) {
+                            throw new IllegalArgumentException("Decimal quantity not supported for item: " + stockItem.getName() +
+                                    " (Provided: " + qtyUsed + "). Only whole numbers are allowed.");
+                        }
+                    }
+
+                    // 2. Stock level validation
+                    BigDecimal currentStock = stockItem.getCurrentStock() != null ? stockItem.getCurrentStock() : BigDecimal.ZERO;
+                    if (currentStock.compareTo(qtyUsed) < 0) {
+                        throw new IllegalArgumentException("Insufficient stock for item: " + stockItem.getName() +
+                                " (Available: " + currentStock + ", Required: " + qtyUsed + ")");
+                    }
+                }
+            }
+        }
+
         invoice.setStatus(TreatmentInvoiceStatus.FINALIZED);
         invoice.setFinalizedAt(OffsetDateTime.now());
 

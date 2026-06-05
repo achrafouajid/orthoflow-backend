@@ -59,6 +59,10 @@ public class StockItem {
     @Builder.Default
     private boolean active = true;
 
+    @Column(name = "decimal_supported", nullable = false)
+    @Builder.Default
+    private boolean decimalSupported = false;
+
     @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "supplier_id")
     private Supplier supplier;
