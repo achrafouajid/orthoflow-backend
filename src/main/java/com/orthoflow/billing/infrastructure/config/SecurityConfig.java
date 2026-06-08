@@ -33,7 +33,9 @@ public class SecurityConfig {
         configuration.setAllowedOrigins(List.of(
             "http://localhost:4200",
             "http://ortho.compaigns.com",
-            "https://ortho.compaigns.com"
+            "https://ortho.compaigns.com",
+            "http://orthodev.compaigns.com",
+            "https://orthodev.compaigns.com"
         ));
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(List.of("*"));
