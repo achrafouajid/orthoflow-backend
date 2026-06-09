@@ -1,8 +1,10 @@
 package com.orthoflow.stock.infrastructure.adapter.persistence;
 
 import com.orthoflow.stock.domain.model.StockItem;
+import com.orthoflow.stock.domain.model.StockItemFilter;
 import com.orthoflow.stock.domain.repository.StockItemRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Repository;
 import java.util.List;
 import java.util.Optional;
@@ -34,8 +36,22 @@ public class StockItemRepositoryAdapter implements StockItemRepository {
         return jpaRepository.findAll();
     }
 
+    /**
+     * Executes a filtered + sorted query via JPA Specifications.
+     * Sort field is whitelisted in {@link StockItemFilter} — no SQL injection risk.
+     */
+    @Override
+    public List<StockItem> findAll(StockItemFilter filter) {
+        Sort sort = filter.isAscending()
+                ? Sort.by(filter.sortBy()).ascending()
+                : Sort.by(filter.sortBy()).descending();
+
+        return jpaRepository.findAll(StockItemSpecification.from(filter), sort);
+    }
+
     @Override
     public void deleteById(UUID id) {
         jpaRepository.deleteById(id);
     }
 }
+

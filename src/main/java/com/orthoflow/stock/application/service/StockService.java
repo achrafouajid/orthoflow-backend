@@ -14,6 +14,8 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+// Filter imports — domain value objects (DIP: service depends on domain, not infrastructure)
+
 @Service
 @RequiredArgsConstructor
 @Slf4j
@@ -25,6 +27,14 @@ public class StockService {
 
     public List<StockItem> getAllStockItems() {
         return stockItemRepository.findAll();
+    }
+
+    /**
+     * Returns stock items matching the given filter (search, category) with server-side sort.
+     * Delegates directly to the repository — service stays thin.
+     */
+    public List<StockItem> getStockItems(StockItemFilter filter) {
+        return stockItemRepository.findAll(filter);
     }
 
     public Optional<StockItem> getStockItemById(UUID id) {
@@ -132,5 +142,12 @@ public class StockService {
 
     public List<StockMovement> getAllMovements() {
         return stockMovementRepository.findAll();
+    }
+
+    /**
+     * Returns stock movements matching the given filter (search, type) with server-side sort.
+     */
+    public List<StockMovement> getMovements(StockMovementFilter filter) {
+        return stockMovementRepository.findAll(filter);
     }
 }

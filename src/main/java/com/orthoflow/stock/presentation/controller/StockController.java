@@ -20,9 +20,24 @@ public class StockController {
 
     // ---------------- Stock Items Endpoints ----------------
 
+    /**
+     * Returns a filtered and sorted list of stock items.
+     *
+     * @param search   Optional free-text search on name / SKU (case-insensitive).
+     * @param category Optional category filter (e.g. CONSUMABLES). Use "ALL" or omit for no filter.
+     * @param sortBy   Field to sort by: name, sku, category, currentStock, purchasePrice,
+     *                 pricePerUse, createdAt. Defaults to "name".
+     * @param sortDir  Sort direction: ASC or DESC. Defaults to "ASC".
+     */
     @GetMapping("/items")
-    public ResponseEntity<List<StockItem>> getAllStockItems() {
-        return ResponseEntity.ok(stockService.getAllStockItems());
+    public ResponseEntity<List<StockItem>> getAllStockItems(
+            @RequestParam(required = false)            String search,
+            @RequestParam(required = false)            String category,
+            @RequestParam(defaultValue = "name")       String sortBy,
+            @RequestParam(defaultValue = "ASC")        String sortDir) {
+
+        StockItemFilter filter = new StockItemFilter(search, category, sortBy, sortDir);
+        return ResponseEntity.ok(stockService.getStockItems(filter));
     }
 
     @GetMapping("/items/{id}")
@@ -95,9 +110,25 @@ public class StockController {
 
     // ---------------- Stock Movements Endpoints ----------------
 
+    /**
+     * Returns a filtered and sorted audit ledger of stock movements.
+     *
+     * @param search       Optional free-text search on item name, SKU or source reference.
+     * @param movementType Optional type filter (e.g. IN, OUT, ADJUSTMENT). Use "ALL" or omit for none.
+     * @param sortBy       Field to sort by: createdAt, movementType, quantity,
+     *                     quantityBefore, quantityAfter, sourceType, sourceReference.
+     *                     Defaults to "createdAt".
+     * @param sortDir      ASC or DESC. Defaults to "DESC" (newest first).
+     */
     @GetMapping("/movements")
-    public ResponseEntity<List<StockMovement>> getAllMovements() {
-        return ResponseEntity.ok(stockService.getAllMovements());
+    public ResponseEntity<List<StockMovement>> getAllMovements(
+            @RequestParam(required = false)                 String search,
+            @RequestParam(required = false)                 String movementType,
+            @RequestParam(defaultValue = "createdAt")       String sortBy,
+            @RequestParam(defaultValue = "DESC")            String sortDir) {
+
+        StockMovementFilter filter = new StockMovementFilter(search, movementType, sortBy, sortDir);
+        return ResponseEntity.ok(stockService.getMovements(filter));
     }
 
     @GetMapping("/items/{id}/movements")
