@@ -1,6 +1,6 @@
 spring:
   application:
-    name: orthoflow-billing
+    name: orthoflow
   datasource:
     url: jdbc:postgresql://localhost:5432/orthoflow
     username: ${DB_USERNAME:postgres}
@@ -16,13 +16,94 @@ spring:
     enabled: true
     locations: classpath:db/migration
 
+app:
+  jwt:
+    # Dev-only default (32+ bytes). ALWAYS override with JWT_SECRET in any
+    # shared/production environment — see application-prod.yml.
+    secret: ${JWT_SECRET:dev-only-secret-change-me-0123456789abcdef}
+    expiration-minutes: ${JWT_EXPIRATION_MINUTES:480}
+  # Base origin used to build the password-reset link sent to users. Override
+  # with FRONTEND_URL wherever the frontend isn't served from localhost:4200
+  # (see application-prod.yml).
+  frontend-url: ${FRONTEND_URL:http://localhost:4200}
+
+# ── Voice-first clinical workflow (audit Part XII) ──────────────────────
+# The deterministic grammar that handles structured clinical dictation runs
+# in the browser and needs none of this. These settings only govern the
+# natural-language fallback for utterances the grammar cannot parse.
+orthoflow:
+  # Browser origins allowed to call this API. Comma-separated via
+  # CORS_ALLOWED_ORIGINS. These were six values hardcoded in SecurityConfig,
+  # including another deployment's preprod hostnames — see CorsProperties.
+  cors:
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:4200,http://localhost:4201}
+  voice:
+    nlu:
+      # disabled | anthropic | openai-compatible
+      #
+      # 'disabled' is the default on purpose. Enabling a provider means
+      # transcripts of a consultation — which contain health information about
+      # the patient and anyone else in the room — start leaving this machine.
+      # That needs a DPA, a lawful basis and a CNDP notification under Law
+      # 09-08 first. 'openai-compatible' pointed at a model on this same VPS
+      # (e.g. Ollama at http://localhost:11434/v1) answers the question by
+      # keeping the data inside the same trust boundary as the database.
+      provider: ${VOICE_NLU_PROVIDER:disabled}
+      # claude-opus-5 is the default. claude-haiku-4-5 is markedly cheaper and
+      # faster and is a reasonable choice for this task — mapping one short
+      # utterance onto a listed intent — but that is a cost/quality tradeoff
+      # for the deployer to make, not one to make silently on their behalf.
+      model: ${VOICE_NLU_MODEL:claude-opus-5}
+      api-key: ${VOICE_NLU_API_KEY:}
+      # Required for openai-compatible, e.g. http://localhost:11434/v1
+      base-url: ${VOICE_NLU_BASE_URL:}
+      timeout-ms: ${VOICE_NLU_TIMEOUT_MS:9000}
+      max-transcript-chars: ${VOICE_NLU_MAX_TRANSCRIPT_CHARS:800}
+      max-output-tokens: ${VOICE_NLU_MAX_OUTPUT_TOKENS:700}
+    audit:
+      # Keeping the raw utterance lets a pilot measure recognition accuracy.
+      # A production clinic generally should not store speech transcripts
+      # beside patient identifiers (audit XII.5) — application-prod.yml turns
+      # this off. The interpreted command is always retained either way.
+      store-transcript: ${VOICE_STORE_TRANSCRIPT:true}
+
 server:
   port: 8080
   servlet:
     context-path: /api/v1
+  tomcat:
+    # No request size limit existed at all (audit V.14) — POST /invoices
+    # with 100,000 lines was accepted and processed with no bound. 2MB
+    # comfortably covers any legitimate invoice/PO/treatment-invoice
+    # payload this app sends while making a pathological body a fast 413,
+    # not a slow OOM risk.
+    max-http-form-post-size: 2MB
+    max-swallow-size: 2MB
+    connection-timeout: 20s
+
+management:
+  endpoints:
+    web:
+      exposure:
+        # Not internet-reachable: Traefik only proxies /api/v1/** (see
+        # docker-compose.production.yml labels), so /actuator/** is only
+        # reachable by containers on the same Docker network — a future
+        # Prometheus scraper included. See SecurityConfig for the matching
+        # permitAll rule.
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: when-authorized
+  metrics:
+    tags:
+      application: ${spring.application.name}
 
 logging:
+  pattern:
+    # correlationId comes from CorrelationIdFilter via MDC — "-" when a log
+    # line is emitted outside a request (startup, scheduled jobs).
+    level: "%5p [%X{correlationId:--}]"
   level:
     org.springframework.security: DEBUG
     org.hibernate.SQL: DEBUG
-    com.orthoflow.billing: DEBUG
+    com.orthoflow: DEBUG

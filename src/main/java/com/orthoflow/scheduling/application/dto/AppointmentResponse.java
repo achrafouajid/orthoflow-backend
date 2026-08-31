@@ -13,6 +13,9 @@ public class AppointmentResponse {
     private UUID patientId;
     private String patientName;
     private OffsetDateTime dateTime;
+    private UUID chairId;
+    private String chairName;
+    private int durationMinutes;
     private String type;
     private AppointmentStatus status;
     private String notes;

@@ -5,6 +5,7 @@ import com.orthoflow.scheduling.domain.repository.AppointmentRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -27,12 +28,17 @@ public class AppointmentRepositoryAdapter implements AppointmentRepository {
 
     @Override
     public List<Appointment> findAll() {
-        return jpaRepository.findAll();
+        return jpaRepository.findAllOrderedByDateTime();
     }
 
     @Override
     public List<Appointment> findByPatientId(UUID patientId) {
         return jpaRepository.findByPatientId(patientId);
+    }
+
+    @Override
+    public List<Appointment> findByDateTimeBetween(OffsetDateTime start, OffsetDateTime end) {
+        return jpaRepository.findByDateTimeBetween(start, end);
     }
 
     @Override

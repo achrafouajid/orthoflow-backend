@@ -1,6 +1,5 @@
 package com.orthoflow.scheduling.domain.model;
 
-import com.orthoflow.billing.domain.model.Patient;
 import jakarta.persistence.*;
 import lombok.*;
 import java.time.OffsetDateTime;
@@ -18,12 +17,29 @@ public class Appointment {
     @Id
     private UUID id;
 
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "patient_id", nullable = false)
-    private Patient patient;
+    @Version
+    @Column(name = "version")
+    private Long version;
+
+    // A plain UUID rather than a @ManyToOne Patient — scheduling reads
+    // patient data through PatientLookup, not by holding a JPA relation
+    // into another module's entity graph (audit I.2).
+    @Column(name = "patient_id", nullable = false)
+    private UUID patientId;
 
     @Column(name = "date_time", nullable = false)
     private OffsetDateTime dateTime;
+
+    // Nullable — a clinic that doesn't track chairs can leave every
+    // appointment unassigned; the DB exclusion constraint (V21) only
+    // applies where chair_id IS NOT NULL, so unassigned appointments never
+    // conflict with each other on this axis (audit VIII.6 / P2 #29).
+    @Column(name = "chair_id")
+    private UUID chairId;
+
+    @Column(name = "duration_minutes", nullable = false)
+    @Builder.Default
+    private int durationMinutes = 30;
 
     @Column(nullable = false)
     private String type;

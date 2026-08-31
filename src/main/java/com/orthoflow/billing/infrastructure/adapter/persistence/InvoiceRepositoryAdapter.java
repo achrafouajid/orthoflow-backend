@@ -3,6 +3,8 @@ package com.orthoflow.billing.infrastructure.adapter.persistence;
 import com.orthoflow.billing.domain.model.Invoice;
 import com.orthoflow.billing.domain.repository.InvoiceRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
@@ -33,6 +35,16 @@ public class InvoiceRepositoryAdapter implements InvoiceRepository {
     @Override
     public List<Invoice> findByPatientId(UUID patientId) {
         return jpaRepository.findByPatientId(patientId);
+    }
+
+    @Override
+    public Page<Invoice> findAll(Pageable pageable) {
+        return jpaRepository.findAll(pageable);
+    }
+
+    @Override
+    public Page<Invoice> findByPatientId(UUID patientId, Pageable pageable) {
+        return jpaRepository.findByPatientId(patientId, pageable);
     }
 
     @Override

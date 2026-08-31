@@ -21,6 +21,10 @@ public class Invoice {
     @Id
     private UUID id;
 
+    @Version
+    @Column(name = "version")
+    private Long version;
+
     @Column(name = "practice_id", nullable = false)
     private UUID practiceId;
 

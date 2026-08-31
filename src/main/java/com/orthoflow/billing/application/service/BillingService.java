@@ -1,10 +1,16 @@
 package com.orthoflow.billing.application.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.orthoflow.billing.application.dto.*;
 import com.orthoflow.billing.domain.model.*;
 import com.orthoflow.billing.domain.repository.InvoiceRepository;
 import com.orthoflow.billing.domain.repository.PaymentRepository;
+import com.orthoflow.billing.infrastructure.adapter.persistence.InvoiceAuditLogJpaRepository;
+import com.orthoflow.common.exception.ConflictException;
+import com.orthoflow.common.exception.NotFoundException;
 import lombok.RequiredArgsConstructor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -20,9 +26,37 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class BillingService {
 
+    private static final Logger log = LoggerFactory.getLogger(BillingService.class);
+    private static final int MONEY_SCALE = 2;
+
     private final InvoiceRepository invoiceRepository;
     private final PaymentRepository paymentRepository;
     private final InvoiceNumberGenerator invoiceNumberGenerator;
+    private final InvoiceAuditLogJpaRepository auditLogRepository;
+    private final ObjectMapper objectMapper;
+
+    /**
+     * Writes to billing_audit_log, which existed since the first migration
+     * but had no writer (audit II.3) — every invoice mutation was
+     * untraceable. Audit writes never fail the business transaction they
+     * describe: a JSON-serialization hiccup on the "details" blob shouldn't
+     * block a payment from being recorded.
+     */
+    private void audit(UUID invoiceId, String action, UUID actorId, Map<String, Object> details) {
+        String json;
+        try {
+            json = objectMapper.writeValueAsString(details);
+        } catch (Exception e) {
+            log.warn("Could not serialize audit details for invoice {} action {}", invoiceId, action, e);
+            json = null;
+        }
+        auditLogRepository.save(InvoiceAuditLog.builder()
+                .invoiceId(invoiceId)
+                .action(action)
+                .actorId(actorId)
+                .details(json)
+                .build());
+    }
 
     @Transactional
     public InvoiceResponse createInvoice(CreateInvoiceRequest request, UUID creatorId) {
@@ -34,46 +68,78 @@ public class BillingService {
                 .treatmentPlanId(request.getTreatmentPlanId())
                 .invoiceNumber(invoiceNumber)
                 .status(InvoiceStatus.DRAFT)
+                .issueDate(LocalDate.now())
+                .dueDate(LocalDate.now().plusDays(14))
                 .currency(request.getCurrency())
                 .regionCode(request.getRegionCode())
                 .notes(request.getNotes())
                 .createdBy(creatorId)
                 .build();
 
+        // subtotal is the pre-discount sum of every line; discountAmount is
+        // tracked separately so the figures the UI showed the user (subtotal,
+        // discount, total) are the figures actually persisted — previously
+        // the discount was baked into "subtotal" and discountAmount was
+        // never set at all (audit III.8).
         BigDecimal subtotal = BigDecimal.ZERO;
+        BigDecimal discountAmount = BigDecimal.ZERO;
         for (InvoiceLineRequest lineReq : request.getLines()) {
-            BigDecimal lineTotal = lineReq.getUnitPrice()
-                    .multiply(lineReq.getQuantity())
-                    .multiply(BigDecimal.ONE.subtract(lineReq.getDiscountPct().divide(BigDecimal.valueOf(100), 4, RoundingMode.HALF_UP)));
-            
+            BigDecimal grossLineTotal = lineReq.getUnitPrice().multiply(lineReq.getQuantity());
+            BigDecimal lineDiscount = grossLineTotal
+                    .multiply(lineReq.getDiscountPct().divide(BigDecimal.valueOf(100), 4, RoundingMode.HALF_UP));
+            BigDecimal netLineTotal = round(grossLineTotal.subtract(lineDiscount));
+
             InvoiceLine line = InvoiceLine.builder()
                     .actCode(lineReq.getActCode())
                     .label(lineReq.getLabel())
                     .quantity(lineReq.getQuantity())
                     .unitPrice(lineReq.getUnitPrice())
                     .discountPct(lineReq.getDiscountPct())
-                    .lineTotal(lineTotal)
+                    .lineTotal(netLineTotal)
                     .sortOrder(lineReq.getSortOrder())
                     .build();
-            
+
             invoice.addLine(line);
-            subtotal = subtotal.add(lineTotal);
+            subtotal = subtotal.add(grossLineTotal);
+            discountAmount = discountAmount.add(lineDiscount);
         }
 
-        invoice.setSubtotal(subtotal);
+        subtotal = round(subtotal);
+        discountAmount = round(discountAmount);
+        BigDecimal taxableAmount = subtotal.subtract(discountAmount);
         BigDecimal taxRate = getTaxRate(request.getRegionCode());
-        BigDecimal taxAmount = subtotal.multiply(taxRate);
+        BigDecimal taxAmount = round(taxableAmount.multiply(taxRate));
+
+        invoice.setSubtotal(subtotal);
+        invoice.setDiscountAmount(discountAmount);
         invoice.setTaxAmount(taxAmount);
-        invoice.setTotal(subtotal.add(taxAmount));
+        invoice.setTotal(taxableAmount.add(taxAmount));
 
         Invoice saved = invoiceRepository.save(invoice);
+        audit(saved.getId(), "CREATED", creatorId, Map.of(
+                "invoiceNumber", invoiceNumber,
+                "total", saved.getTotal().toString()));
         return mapToResponse(saved);
     }
 
     @Transactional
     public void recordPayment(UUID invoiceId, RecordPaymentRequest request, UUID recorderId) {
         Invoice invoice = invoiceRepository.findById(invoiceId)
-                .orElseThrow(() -> new RuntimeException("Invoice not found"));
+                .orElseThrow(() -> new NotFoundException("Invoice not found"));
+
+        if (invoice.getStatus() == InvoiceStatus.CANCELLED) {
+            throw new ConflictException("Cannot record a payment against a cancelled invoice");
+        }
+        if (invoice.getStatus() == InvoiceStatus.PAID) {
+            throw new ConflictException("This invoice is already fully paid");
+        }
+
+        BigDecimal alreadyPaid = totalPaid(invoice);
+        BigDecimal outstanding = invoice.getTotal().subtract(alreadyPaid);
+        if (request.getAmount().compareTo(outstanding) > 0) {
+            throw new ConflictException(
+                    "Payment of " + request.getAmount() + " exceeds the outstanding balance of " + outstanding);
+        }
 
         Payment payment = Payment.builder()
                 .invoice(invoice)
@@ -86,42 +152,88 @@ public class BillingService {
                 .build();
 
         invoice.addPayment(payment);
-        
-        BigDecimal totalPaid = invoice.getPayments().stream()
-                .map(Payment::getAmount)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
-        
-        if (totalPaid.compareTo(invoice.getTotal()) >= 0) {
+
+        BigDecimal totalPaidAfter = alreadyPaid.add(request.getAmount());
+        if (totalPaidAfter.compareTo(invoice.getTotal()) >= 0) {
             invoice.setStatus(InvoiceStatus.PAID);
-        } else if (totalPaid.compareTo(BigDecimal.ZERO) > 0) {
+        } else {
             invoice.setStatus(InvoiceStatus.PARTIALLY_PAID);
         }
 
         invoiceRepository.save(invoice);
+        audit(invoice.getId(), "PAYMENT_RECORDED", recorderId, Map.of(
+                "amount", request.getAmount().toString(),
+                "method", String.valueOf(request.getMethod()),
+                "resultingStatus", invoice.getStatus().toString()));
     }
+
+    /**
+     * Voids an invoice that hasn't been paid against. There is deliberately
+     * no path from PAID/PARTIALLY_PAID to CANCELLED here — reversing money
+     * that has already changed hands is a refund, a different operation
+     * this codebase doesn't model yet (audit II.14). Added for
+     * TreatmentInvoiceService#cancelInvoice (ADR 0005 / P3 #39) to void the
+     * linked invoice when a treatment session is cancelled before it's
+     * been paid; not yet exposed as its own REST endpoint for a
+     * user-initiated "void this invoice" action outside that flow.
+     */
+    @Transactional
+    public void cancelInvoice(UUID invoiceId, UUID actorId) {
+        Invoice invoice = invoiceRepository.findById(invoiceId)
+                .orElseThrow(() -> new NotFoundException("Invoice not found"));
+
+        if (invoice.getStatus() == InvoiceStatus.CANCELLED) {
+            return;
+        }
+        if (invoice.getStatus() == InvoiceStatus.PAID || invoice.getStatus() == InvoiceStatus.PARTIALLY_PAID) {
+            throw new ConflictException(
+                    "Cannot cancel an invoice with payments recorded against it; a refund is a separate, unmodeled operation");
+        }
+
+        invoice.setStatus(InvoiceStatus.CANCELLED);
+        invoiceRepository.save(invoice);
+        audit(invoice.getId(), "CANCELLED", actorId, Map.of());
+    }
+
     @Transactional(readOnly = true)
-    public List<InvoiceResponse> getInvoices() {
-        return invoiceRepository.findAll().stream()
-                .map(this::mapToResponse)
-                .collect(Collectors.toList());
+    public org.springframework.data.domain.Page<InvoiceResponse> getInvoices(
+            UUID patientId, org.springframework.data.domain.Pageable pageable) {
+        org.springframework.data.domain.Page<Invoice> invoices = patientId != null
+                ? invoiceRepository.findByPatientId(patientId, pageable)
+                : invoiceRepository.findAll(pageable);
+        return invoices.map(this::mapToResponse);
     }
 
     @Transactional(readOnly = true)
     public InvoiceResponse getInvoice(UUID id) {
         return invoiceRepository.findById(id)
                 .map(this::mapToResponse)
-                .orElseThrow(() -> new RuntimeException("Invoice not found"));
+                .orElseThrow(() -> new NotFoundException("Invoice not found"));
     }
 
     @Transactional(readOnly = true)
     public BillingSummaryResponse getBillingSummary() {
         List<Invoice> invoices = invoiceRepository.findAll();
-        
-        BigDecimal totalInvoiced = invoices.stream()
+
+        LocalDate periodStart = LocalDate.now().withDayOfMonth(1);
+        LocalDate periodEnd = LocalDate.now().withDayOfMonth(LocalDate.now().lengthOfMonth());
+
+        // Scoped to the declared period — previously this claimed "this
+        // month" while summing every invoice ever created (audit II.12).
+        List<Invoice> invoicesThisPeriod = invoices.stream()
+                .filter(inv -> {
+                    LocalDate issued = inv.getIssueDate() != null
+                            ? inv.getIssueDate()
+                            : inv.getCreatedAt().toLocalDate();
+                    return !issued.isBefore(periodStart) && !issued.isAfter(periodEnd);
+                })
+                .collect(Collectors.toList());
+
+        BigDecimal totalInvoiced = invoicesThisPeriod.stream()
                 .map(Invoice::getTotal)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
-        
-        BigDecimal totalCollected = invoices.stream()
+
+        BigDecimal totalCollected = invoicesThisPeriod.stream()
                 .flatMap(inv -> inv.getPayments().stream())
                 .map(Payment::getAmount)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
@@ -130,14 +242,24 @@ public class BillingService {
                 .collect(Collectors.groupingBy(Invoice::getStatus, Collectors.counting()));
 
         return BillingSummaryResponse.builder()
-                .periodStart(LocalDate.now().withDayOfMonth(1))
-                .periodEnd(LocalDate.now().withDayOfMonth(LocalDate.now().lengthOfMonth()))
+                .periodStart(periodStart)
+                .periodEnd(periodEnd)
                 .totalInvoiced(totalInvoiced)
                 .totalCollected(totalCollected)
                 .outstandingAmount(totalInvoiced.subtract(totalCollected))
                 .invoiceCount(invoices.size())
                 .byStatus(byStatus)
                 .build();
+    }
+
+    private BigDecimal totalPaid(Invoice invoice) {
+        return invoice.getPayments().stream()
+                .map(Payment::getAmount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
+
+    private BigDecimal round(BigDecimal value) {
+        return value.setScale(MONEY_SCALE, RoundingMode.HALF_UP);
     }
 
     private BigDecimal getTaxRate(String regionCode) {
@@ -150,6 +272,9 @@ public class BillingService {
     }
 
     private InvoiceResponse mapToResponse(Invoice invoice) {
+        BigDecimal amountPaid = round(totalPaid(invoice));
+        BigDecimal balanceDue = invoice.getTotal() != null ? invoice.getTotal().subtract(amountPaid) : null;
+
         return InvoiceResponse.builder()
                 .id(invoice.getId())
                 .practiceId(invoice.getPracticeId())
@@ -160,11 +285,15 @@ public class BillingService {
                 .dueDate(invoice.getDueDate())
                 .currency(invoice.getCurrency())
                 .subtotal(invoice.getSubtotal())
+                .discountAmount(invoice.getDiscountAmount())
                 .taxAmount(invoice.getTaxAmount())
                 .total(invoice.getTotal())
+                .amountPaid(amountPaid)
+                .balanceDue(balanceDue)
                 .regionCode(invoice.getRegionCode())
                 .createdAt(invoice.getCreatedAt())
                 .lines(invoice.getLines().stream().map(this::mapLineToResponse).collect(Collectors.toList()))
+                .payments(invoice.getPayments().stream().map(this::mapPaymentToResponse).collect(Collectors.toList()))
                 .build();
     }
 
@@ -176,6 +305,16 @@ public class BillingService {
                 .quantity(line.getQuantity())
                 .unitPrice(line.getUnitPrice())
                 .lineTotal(line.getLineTotal())
+                .build();
+    }
+
+    private PaymentResponse mapPaymentToResponse(Payment payment) {
+        return PaymentResponse.builder()
+                .id(payment.getId())
+                .amount(payment.getAmount())
+                .method(payment.getMethod())
+                .paymentDate(payment.getPaymentDate())
+                .reference(payment.getReference())
                 .build();
     }
 }

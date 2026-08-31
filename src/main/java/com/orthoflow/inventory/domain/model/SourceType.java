@@ -1,0 +1,10 @@
+package com.orthoflow.inventory.domain.model;
+
+public enum SourceType {
+    DELIVERY_NOTE,
+    TREATMENT_INVOICE,
+    SALES_ORDER,
+    MANUAL_ADJUSTMENT,
+    PATIENT_TREATMENT,
+    INVENTORY_COUNT
+}

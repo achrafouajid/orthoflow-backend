@@ -21,9 +21,13 @@ public class InvoiceResponse {
     private LocalDate dueDate;
     private String currency;
     private BigDecimal subtotal;
+    private BigDecimal discountAmount;
     private BigDecimal taxAmount;
     private BigDecimal total;
+    private BigDecimal amountPaid;
+    private BigDecimal balanceDue;
     private String regionCode;
     private OffsetDateTime createdAt;
     private List<InvoiceLineResponse> lines;
+    private List<PaymentResponse> payments;
 }

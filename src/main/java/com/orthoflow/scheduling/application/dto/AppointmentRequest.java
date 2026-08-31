@@ -9,6 +9,8 @@ import java.util.UUID;
 public class AppointmentRequest {
     private UUID patientId;
     private OffsetDateTime dateTime;
+    private UUID chairId;
+    private Integer durationMinutes;
     private String type;
     private AppointmentStatus status;
     private String notes;

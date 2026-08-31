@@ -1,0 +1,121 @@
+name: Backend CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Compile and run tests
+        run: mvn -B verify
+
+      - name: Build image (no push) to catch Dockerfile regressions
+        run: docker build -t orthoflow-backend:ci .
+
+  openapi-drift:
+    # AUDIT.md Appendix B / P1#22: 84 frontend HTTP call sites against 67
+    # backend endpoints, with no way to know when they drifted apart short
+    # of reading both codebases by hand. Boots the real app against a real
+    # Postgres, pulls the live OpenAPI document springdoc already serves,
+    # regenerates the frontend's committed TS types from it, and fails the
+    # build if that diff isn't empty — the same discipline `npm audit` and
+    # `ng build` already enforce, applied to the contract itself.
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_DB: orthoflow
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      # backend and frontend are separate repos (docs/adr/0004), so this
+      # job checks out both explicitly — the backend to build and boot,
+      # the frontend to diff its committed generated types against.
+      # If orthoflow-front is ever made private, this checkout needs a
+      # PAT with read access passed as a `FRONTEND_REPO_TOKEN` secret
+      # (the default GITHUB_TOKEN can't read a different private repo).
+      - uses: actions/checkout@v4
+        with:
+          path: backend
+
+      - uses: actions/checkout@v4
+        with:
+          repository: achrafouajid/orthoflow-front
+          path: frontend
+          token: ${{ secrets.FRONTEND_REPO_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Build backend jar
+        working-directory: backend
+        run: mvn -B -DskipTests package
+
+      - name: Boot backend against the CI database
+        working-directory: backend
+        run: |
+          nohup java -jar target/*.jar > backend.log 2>&1 &
+          echo $! > backend.pid
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:8080/actuator/health && exit 0
+            sleep 2
+          done
+          echo "Backend did not become healthy in time"; cat backend.log; exit 1
+
+      - name: Fetch live OpenAPI document
+        run: curl -sf http://localhost:8080/api/v1/v3/api-docs -o openapi.json
+
+      - name: Stop backend
+        if: always()
+        working-directory: backend
+        run: kill "$(cat backend.pid)" || true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Regenerate frontend API types from the live document
+        run: |
+          npx --yes openapi-typescript openapi.json -o /tmp/api-types.d.ts
+          diff -u frontend/src/app/core/api-types.d.ts /tmp/api-types.d.ts || \
+            (echo "::error::Frontend API types are out of date. Run 'npm run generate:api-types' (with the backend running locally) in the frontend repo and commit the result." && exit 1)
+
+  dependency-review:
+    # Flags newly-introduced dependencies with known advisories straight from
+    # GitHub's Advisory Database (via the repo's dependency graph) — no NVD
+    # download, no API key, so it can't add the flakiness a full OWASP
+    # dependency-check scan would (audit VII.2/P1#23: backend had zero
+    # dependency scanning of any kind).
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependency review
+        uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high
