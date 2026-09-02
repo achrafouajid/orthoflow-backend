@@ -1,0 +1,91 @@
+# OrthoFlow production deployment — backend + frontend + Postgres, fronted by
+# the shared Traefik instance on this host (network `proxy`, resolver
+# `letsencrypt`).
+#
+#   frontend  ->  https://ortho.crmbento.com
+#   backend   ->  https://apiortho.crmbento.com   (all routes under /api/v1)
+#
+# The frontend source is a clone of github.com/achrafouajid/orthoflow-front
+# placed at ./frontend (git-ignored in this repo). `deploy.sh` keeps it in sync.
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: orthoflow-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: orthoflow
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set (see .env.example)}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      internal: {}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d orthoflow"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: orthoflow-backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/orthoflow
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set (see .env.example)}
+      DB_USERNAME: postgres
+      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set (see .env.example)}
+      SPRING_JPA_HIBERNATE_DDL_AUTO: validate
+      SPRING_FLYWAY_ENABLED: "true"
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set (see .env.example)}
+      FRONTEND_URL: ${FRONTEND_URL:-https://ortho.crmbento.com}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-https://ortho.crmbento.com}
+    networks:
+      internal: {}
+      proxy: {}
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: "proxy"
+      traefik.http.routers.orthoflow-api.rule: "Host(`apiortho.crmbento.com`) && PathPrefix(`/api/v1`)"
+      traefik.http.routers.orthoflow-api.entrypoints: "websecure"
+      traefik.http.routers.orthoflow-api.tls: "true"
+      traefik.http.routers.orthoflow-api.tls.certresolver: "letsencrypt"
+      traefik.http.services.orthoflow-api.loadbalancer.server.port: "8080"
+      traefik.http.services.orthoflow-api.loadbalancer.healthcheck.path: "/api/v1/actuator/health"
+      traefik.http.services.orthoflow-api.loadbalancer.healthcheck.interval: "15s"
+      traefik.http.services.orthoflow-api.loadbalancer.healthcheck.timeout: "5s"
+
+  front:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        CONFIG: production
+    container_name: orthoflow-frontend
+    restart: unless-stopped
+    networks:
+      proxy: {}
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: "proxy"
+      traefik.http.routers.orthoflow.rule: "Host(`ortho.crmbento.com`)"
+      traefik.http.routers.orthoflow.entrypoints: "websecure"
+      traefik.http.routers.orthoflow.tls: "true"
+      traefik.http.routers.orthoflow.tls.certresolver: "letsencrypt"
+      traefik.http.services.orthoflow.loadbalancer.server.port: "80"
+
+volumes:
+  postgres_data:
+
+networks:
+  internal:
+    internal: true
+  proxy:
+    external: true

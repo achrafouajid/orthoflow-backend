@@ -1,0 +1,14 @@
+# The build only needs pom.xml + src. Everything else (a cloned frontend/,
+# build output, git metadata, docs) just bloats the build context.
+target/
+.git/
+.github/
+frontend/
+*.md
+.env
+.env.*
+!.env.example
+.DS_Store
+Dockerfile
+docker-compose*.yml
+deploy.sh

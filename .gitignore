@@ -33,3 +33,10 @@ build/
 
 ### OS X ###
 .DS_Store
+
+### OrthoFlow deploy ###
+# Server-only secrets and the frontend clone that deploy.sh pulls beside this.
+.env
+.env.*
+!.env.example
+/frontend/
