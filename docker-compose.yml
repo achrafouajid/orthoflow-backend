@@ -5,14 +5,8 @@
 #   frontend  ->  https://ortho.crmbento.com
 #   backend   ->  https://apiortho.crmbento.com   (all routes under /api/v1)
 #
-# CI (GitHub Actions) builds each service's image, pushes it to GHCR, and runs
-# `deploy.sh <service> <sha>` over SSH, which `docker compose pull`s that one
-# tag and recreates only the changed service. The `image:` lines below carry a
-# `:latest` default so `docker compose up -d` also works with no tag set; the
-# `build:` blocks keep `docker compose up -d --build` working for local use.
-#
-# The frontend is its own repo/image now (ghcr.io/.../orthoflow-front); the old
-# ./frontend clone is only a local-build fallback.
+# The frontend source is a clone of github.com/achrafouajid/orthoflow-front
+# placed at ./frontend (git-ignored in this repo). `deploy.sh` keeps it in sync.
 services:
   db:
     image: postgres:15-alpine
@@ -33,7 +27,6 @@ services:
       retries: 10
 
   backend:
-    image: ghcr.io/bento-solutions/orthoflow-backend:${BACKEND_IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: Dockerfile
@@ -54,20 +47,6 @@ services:
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set (see .env.example)}
       FRONTEND_URL: ${FRONTEND_URL:-https://ortho.crmbento.com}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-https://ortho.crmbento.com}
-      # Server-side speech-to-text. Off unless VOICE_STT_ENABLED=true is set
-      # in .env; the key is read here and never reaches the browser.
-      VOICE_STT_ENABLED: ${VOICE_STT_ENABLED:-false}
-      VOICE_STT_API_KEY: ${VOICE_STT_API_KEY:-}
-      VOICE_STT_MODEL: ${VOICE_STT_MODEL:-whisper-large-v3-turbo}
-      VOICE_STT_BASE_URL: ${VOICE_STT_BASE_URL:-https://api.groq.com/openai/v1}
-    healthcheck:
-      # deploy.sh waits on this after a pull; BusyBox wget ships in the
-      # temurin-alpine runtime image.
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:8080/api/v1/actuator/health"]
-      interval: 15s
-      timeout: 5s
-      retries: 5
-      start_period: 45s
     networks:
       internal: {}
       proxy: {}
@@ -84,7 +63,6 @@ services:
       traefik.http.services.orthoflow-api.loadbalancer.healthcheck.timeout: "5s"
 
   front:
-    image: ghcr.io/bento-solutions/orthoflow-front:${FRONT_IMAGE_TAG:-latest}
     build:
       context: ./frontend
       dockerfile: Dockerfile
@@ -92,12 +70,6 @@ services:
         CONFIG: production
     container_name: orthoflow-frontend
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:80/"]
-      interval: 15s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
     networks:
       proxy: {}
     labels:

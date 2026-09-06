@@ -159,8 +159,6 @@ class SecurityPolicyTest {
                 // ── Voice: dictates into the clinical record ─────────────────
                 Case.restricted(HttpMethod.POST, "/voice/sessions",
                         "voice sessions inherit the clinical record's floor", DOCTOR, ADMIN),
-                Case.restricted(HttpMethod.POST, "/voice/transcribe",
-                        "capture-to-text carries consultation audio and is clinician-only", DOCTOR, ADMIN),
 
                 // ── Compliance: the operator's duty ──────────────────────────
                 Case.restricted(HttpMethod.GET, "/patients/" + ID + "/compliance/export",
