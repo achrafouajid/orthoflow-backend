@@ -15,6 +15,16 @@ spring:
   flyway:
     enabled: true
     locations: classpath:db/migration
+  servlet:
+    multipart:
+      # Voice-capture clips only (POST /voice/transcribe). A push-to-talk
+      # utterance is tens of KB; a continuous-examination segment rarely
+      # passes 1 MB. The ceiling is deliberately generous so a long
+      # dictation is not truncated — SpeechToTextService rejects anything
+      # over orthoflow.voice.stt.max-audio-bytes with a 400 before the
+      # provider call, so this is only the outer backstop.
+      max-file-size: ${VOICE_STT_MAX_UPLOAD:15MB}
+      max-request-size: 16MB
 
 app:
   jwt:
@@ -64,6 +74,28 @@ orthoflow:
       timeout-ms: ${VOICE_NLU_TIMEOUT_MS:9000}
       max-transcript-chars: ${VOICE_NLU_MAX_TRANSCRIPT_CHARS:800}
       max-output-tokens: ${VOICE_NLU_MAX_OUTPUT_TOKENS:700}
+    # ── Server-side speech-to-text ─────────────────────────────────────
+    # The browser's own SpeechRecognition is the default and needs none of
+    # this. Enabling it routes captured audio through a hosted Whisper
+    # endpoint instead — which, exactly like the NLU fallback above, sends
+    # consultation-room audio to a third party and needs the same DPA,
+    # lawful basis and CNDP notification (Law 09-08) first. The API key is
+    # read here and never sent to the browser. Point base-url at a
+    # self-hosted faster-whisper server to keep audio on-premise.
+    stt:
+      enabled: ${VOICE_STT_ENABLED:false}
+      provider: ${VOICE_STT_PROVIDER:groq}
+      api-key: ${VOICE_STT_API_KEY:}
+      # whisper-large-v3-turbo (fastest, cheapest) | whisper-large-v3
+      model: ${VOICE_STT_MODEL:whisper-large-v3-turbo}
+      base-url: ${VOICE_STT_BASE_URL:https://api.groq.com/openai/v1}
+      # Blank = detect the language per utterance, which is correct for
+      # Moroccan clinicians who code-switch mid-sentence. Set to fr/ar/en
+      # only to force it.
+      language: ${VOICE_STT_LANGUAGE:}
+      temperature: ${VOICE_STT_TEMPERATURE:0}
+      timeout-ms: ${VOICE_STT_TIMEOUT_MS:15000}
+      max-audio-bytes: ${VOICE_STT_MAX_AUDIO_BYTES:15728640}
     audit:
       # Keeping the raw utterance lets a pilot measure recognition accuracy.
       # A production clinic generally should not store speech transcripts
