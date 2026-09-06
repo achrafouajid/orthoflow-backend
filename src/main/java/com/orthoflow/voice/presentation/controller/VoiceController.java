@@ -5,14 +5,17 @@ import com.orthoflow.clinical.application.dto.PatientClinicalRecordResponse;
 import com.orthoflow.clinical.application.service.ClinicalRecordService;
 import com.orthoflow.clinical.domain.model.FindingCatalog;
 import com.orthoflow.voice.application.dto.*;
+import com.orthoflow.voice.application.service.SpeechToTextService;
 import com.orthoflow.voice.application.service.VoiceAuditService;
 import com.orthoflow.voice.application.service.VoiceCommandService;
 import com.orthoflow.voice.application.service.VoiceSessionService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 import java.util.Map;
@@ -38,6 +41,7 @@ public class VoiceController {
     private final VoiceCommandService voiceCommandService;
     private final ClinicalRecordService clinicalRecordService;
     private final VoiceAuditService voiceAuditService;
+    private final SpeechToTextService speechToTextService;
     private final CurrentUserProvider currentUserProvider;
 
     // ── Sessions ─────────────────────────────────────────────────────────
@@ -117,6 +121,29 @@ public class VoiceController {
         if (sessionId != null) return voiceAuditService.forSession(sessionId);
         if (patientId != null) return voiceAuditService.forPatient(patientId);
         throw new IllegalArgumentException("Provide patientId or sessionId");
+    }
+
+    // ── Speech-to-text ──────────────────────────────────────────────────
+
+    /**
+     * Transcribes one captured clip and hands the text back to the browser,
+     * which runs it through the identical grammar → NLU → confirm pipeline a
+     * typed or browser-recognised utterance takes. Nothing is written to the
+     * clinical record here.
+     *
+     * <p>Only reached when the client has been switched to server-side
+     * capture; the browser's own {@code SpeechRecognition} is the default and
+     * calls none of this. When {@code orthoflow.voice.stt.enabled} is false or
+     * the provider is unreachable, the response carries an {@code error} tag
+     * and an empty transcript so the client falls back to its own recogniser.
+     */
+    @PostMapping(value = "/transcribe", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @PreAuthorize("hasAnyRole('DOCTOR', 'ADMIN')")
+    public TranscriptionResponse transcribe(
+            @RequestParam("file") MultipartFile file,
+            @RequestParam(value = "language", required = false) String language,
+            @RequestParam(value = "prompt", required = false) String prompt) {
+        return speechToTextService.transcribe(file, language, prompt);
     }
 
     // ── NLU fallback ────────────────────────────────────────────────────

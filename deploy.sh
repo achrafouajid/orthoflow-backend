@@ -14,7 +14,7 @@ echo "==> Sync frontend clone"
 if [ -d frontend/.git ]; then
   git -C frontend pull --ff-only
 else
-  git clone git@github.com:achrafouajid/orthoflow-front.git frontend
+  git clone git@github.com:bento-solutions/orthoflow-front.git frontend
 fi
 
 echo "==> Build images"
