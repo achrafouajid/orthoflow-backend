@@ -61,7 +61,7 @@ jobs:
 
       - uses: actions/checkout@v4
         with:
-          repository: bento-solutions/orthoflow-front
+          repository: achrafouajid/orthoflow-front
           path: frontend
           token: ${{ secrets.FRONTEND_REPO_TOKEN || secrets.GITHUB_TOKEN }}
 
