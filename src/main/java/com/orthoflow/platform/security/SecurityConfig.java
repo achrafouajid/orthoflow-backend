@@ -91,9 +91,10 @@ public class SecurityConfig {
 
             // ── Public ──────────────────────────────────────────────────────
             // /auth/register is open because it bootstraps the first ADMIN on
-            // an empty database; once any user exists AuthController itself
-            // requires an ADMIN. That check cannot move here — it depends on
-            // whether the users table is empty, not on the path.
+            // an empty database. When orthoflow.auth.restrict-registration-to-
+            // bootstrap is enabled, AuthController itself requires an ADMIN
+            // once any user exists; that check cannot move here — it depends
+            // on whether the users table is empty, not on the path.
             .requestMatchers(HttpMethod.POST,
                     "/auth/login", "/auth/register", "/auth/forgot-password", "/auth/reset-password").permitAll()
             // Reachable only from inside the Docker network — Traefik proxies

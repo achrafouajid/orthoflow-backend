@@ -23,6 +23,12 @@ logging:
     com.orthoflow: INFO
 
 orthoflow:
+  # See AuthController#register / application.yml. Still defaults to false
+  # here too — self-service account creation stays open until the real
+  # practice is onboarded, at which point set RESTRICT_REGISTRATION_TO_BOOTSTRAP=true
+  # on this deployment.
+  auth:
+    restrict-registration-to-bootstrap: ${RESTRICT_REGISTRATION_TO_BOOTSTRAP:false}
   # No default in production: a deployment that forgets this fails to start
   # rather than silently serving a frontend it does not trust.
   cors:

@@ -42,6 +42,10 @@ app:
 # in the browser and needs none of this. These settings only govern the
 # natural-language fallback for utterances the grammar cannot parse.
 orthoflow:
+  auth:
+    # See AuthController#register. Off in dev so the team can create/reset
+    # test accounts freely; turn on once a real practice is onboarded.
+    restrict-registration-to-bootstrap: ${RESTRICT_REGISTRATION_TO_BOOTSTRAP:false}
   # Browser origins allowed to call this API. Comma-separated via
   # CORS_ALLOWED_ORIGINS. These were six values hardcoded in SecurityConfig,
   # including another deployment's preprod hostnames — see CorsProperties.

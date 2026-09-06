@@ -10,6 +10,7 @@ import com.orthoflow.auth.application.service.AuthService;
 import com.orthoflow.common.exception.UnauthorizedException;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 
@@ -20,22 +21,33 @@ public class AuthController {
 
     private final AuthService authService;
 
+    // Off during pre-launch development so the team can create/reset
+    // multiple test accounts without an admin session. Flip
+    // RESTRICT_REGISTRATION_TO_BOOTSTRAP=true (no code change needed) once
+    // a real practice is onboarded and self-service account creation should
+    // require an authenticated ADMIN again.
+    @Value("${orthoflow.auth.restrict-registration-to-bootstrap:false}")
+    private boolean restrictRegistrationToBootstrap;
+
     @PostMapping("/login")
     public LoginResponse login(@Valid @RequestBody LoginRequest request) {
         return authService.login(request);
     }
 
     /**
-     * Open only to bootstrap the very first (ADMIN) account on an empty
-     * database. Once any user exists, creating further accounts requires an
-     * authenticated ADMIN — see the @PreAuthorize below.
+     * Open to bootstrap the very first (ADMIN) account on an empty database.
+     * When orthoflow.auth.restrict-registration-to-bootstrap is enabled,
+     * creating further accounts once any user exists requires an
+     * authenticated ADMIN.
      */
     @PostMapping("/register")
     @ResponseStatus(HttpStatus.CREATED)
     public UserResponse register(@Valid @RequestBody RegisterRequest request) {
-        boolean bootstrap = authService.noUsersExist();
-        if (!bootstrap && !hasAdminRole()) {
-            throw new UnauthorizedException("Only an administrator can create new accounts");
+        if (restrictRegistrationToBootstrap) {
+            boolean bootstrap = authService.noUsersExist();
+            if (!bootstrap && !hasAdminRole()) {
+                throw new UnauthorizedException("Only an administrator can create new accounts");
+            }
         }
         return authService.register(request);
     }
