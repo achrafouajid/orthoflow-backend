@@ -109,10 +109,32 @@ public class NluResponseParser {
         JsonNode node = root.path("entities");
         if (!node.isObject()) return new LinkedHashMap<>();
         try {
-            return objectMapper.convertValue(node, Map.class);
+            Map<String, Object> entities = objectMapper.convertValue(node, Map.class);
+            return normaliseIdentifiers(entities);
         } catch (IllegalArgumentException e) {
             return new LinkedHashMap<>();
         }
+    }
+
+    /**
+     * Identifiers that are strings everywhere else in the system stay strings
+     * here, whatever JSON type the model chose for them.
+     *
+     * <p>Models return {@code "fdi": 16} as often as {@code "fdi": "16"}, and
+     * Jackson faithfully preserves the difference. The write path survives it
+     * — it calls {@code toString()} — but the entity map is also serialised
+     * onto the audit row, which is what the browser reads back when it renders
+     * the review page and when it matches "enlève la carie sur la seize". Both
+     * test for a string, so a numeric fdi silently disappears from the tooth
+     * chart and cannot be removed by voice, while the finding itself saves
+     * perfectly normally. Canonicalising here fixes every consumer at once.
+     */
+    private static Map<String, Object> normaliseIdentifiers(Map<String, Object> entities) {
+        Object fdi = entities.get("fdi");
+        if (fdi instanceof Number number) {
+            entities.put("fdi", String.valueOf(number.longValue()));
+        }
+        return entities;
     }
 
     @SuppressWarnings("unchecked")
