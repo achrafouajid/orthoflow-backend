@@ -2,8 +2,8 @@ package com.orthoflow.voice.application.service;
 
 import com.orthoflow.common.exception.ValidationException;
 import com.orthoflow.voice.application.dto.TranscriptionResponse;
-import com.orthoflow.voice.infrastructure.stt.GroqTranscriptionClient;
 import com.orthoflow.voice.infrastructure.stt.SpeechToTextProperties;
+import com.orthoflow.voice.infrastructure.stt.TranscriptionProvider;
 import com.orthoflow.voice.infrastructure.stt.TranscriptionResult;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
@@ -11,6 +11,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.util.List;
+import java.util.Optional;
 
 /**
  * Server-side capture-to-text. The browser records a clip and posts it here;
@@ -28,25 +30,48 @@ import java.io.IOException;
 public class SpeechToTextService {
 
     private final SpeechToTextProperties properties;
-    private final GroqTranscriptionClient client;
+    private final List<TranscriptionProvider> providers;
 
-    public SpeechToTextService(SpeechToTextProperties properties, GroqTranscriptionClient client) {
+    public SpeechToTextService(SpeechToTextProperties properties, List<TranscriptionProvider> providers) {
         this.properties = properties;
-        this.client = client;
+        this.providers = providers;
+    }
+
+    /**
+     * The provider named by {@code orthoflow.voice.stt.provider}, or empty if
+     * that name matches none. An unrecognised provider name is treated as
+     * "off" rather than silently falling back to whichever one happens to be
+     * first on the classpath — a deployment that meant to send audio to Gemini
+     * and typoed the name should get browser recognition and a warning in the
+     * log, not Groq.
+     */
+    private Optional<TranscriptionProvider> selectProvider() {
+        String configured = properties.getProvider();
+        return providers.stream()
+                .filter(p -> p.name().equalsIgnoreCase(configured))
+                .findFirst();
     }
 
     @PostConstruct
     void reportConfiguration() {
+        Optional<TranscriptionProvider> provider = selectProvider();
         if (!properties.isEnabled()) {
             log.info("Server-side speech-to-text disabled. The browser's own SpeechRecognition is used; "
-                    + "set orthoflow.voice.stt.enabled=true with an API key to route capture through "
-                    + "a hosted Whisper endpoint instead.");
-        } else if (!client.isConfigured()) {
-            log.warn("orthoflow.voice.stt.enabled=true but no api-key/base-url is set — /voice/transcribe "
-                    + "will report stt-not-configured and the client will fall back to browser recognition.");
+                    + "set orthoflow.voice.stt.enabled=true with a provider and API key to route capture "
+                    + "through a hosted recogniser instead.");
+        } else if (provider.isEmpty()) {
+            log.warn("orthoflow.voice.stt.provider='{}' matches no registered provider (known: {}) — "
+                            + "/voice/transcribe will report stt-not-configured and the client will fall "
+                            + "back to browser recognition.",
+                    properties.getProvider(), providers.stream().map(TranscriptionProvider::name).toList());
+        } else if (!provider.get().isConfigured()) {
+            log.warn("orthoflow.voice.stt.enabled=true with provider={} but its api-key/base-url is not "
+                            + "set — /voice/transcribe will report stt-not-configured and the client will "
+                            + "fall back to browser recognition.",
+                    provider.get().name());
         } else {
-            log.info("Server-side speech-to-text enabled: provider={} model={} endpoint={}",
-                    properties.getProvider(), properties.getModel(), properties.getBaseUrl());
+            log.info("Server-side speech-to-text enabled: provider={} model={}",
+                    provider.get().name(), properties.activeModel());
         }
     }
 
@@ -67,6 +92,11 @@ public class SpeechToTextService {
             return disabled("stt-disabled");
         }
 
+        Optional<TranscriptionProvider> provider = selectProvider();
+        if (provider.isEmpty()) {
+            return disabled("stt-not-configured");
+        }
+
         byte[] bytes;
         try {
             bytes = audio.getBytes();
@@ -74,7 +104,7 @@ public class SpeechToTextService {
             throw new ValidationException("The uploaded recording could not be read.");
         }
 
-        TranscriptionResult result = client.transcribe(
+        TranscriptionResult result = provider.get().transcribe(
                 bytes,
                 filename(audio),
                 audio.getContentType(),
@@ -90,7 +120,7 @@ public class SpeechToTextService {
         return TranscriptionResponse.builder()
                 .text(result.text())
                 .provider(properties.getProvider())
-                .model(properties.getModel())
+                .model(properties.activeModel())
                 .language(result.language())
                 .durationSeconds(result.durationSeconds())
                 .build();
@@ -100,7 +130,7 @@ public class SpeechToTextService {
         return TranscriptionResponse.builder()
                 .text("")
                 .provider(properties.getProvider())
-                .model(properties.getModel())
+                .model(properties.activeModel())
                 .error(error)
                 .build();
     }

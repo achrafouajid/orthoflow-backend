@@ -84,11 +84,28 @@ orthoflow:
     # self-hosted faster-whisper server to keep audio on-premise.
     stt:
       enabled: ${VOICE_STT_ENABLED:false}
+      # groq (Whisper, OpenAI-shaped multipart) | gemini (Interactions API)
+      #
+      # gemini is the better recogniser for the speech this app actually
+      # hears: French with Darija and English mixed into the same sentence,
+      # carrying dental vocabulary. Whisper decodes phonemes in isolation and
+      # loses clinical terms; Gemini can be told what kind of speech this is.
+      # groq remains configured so a deployment can A/B the two.
       provider: ${VOICE_STT_PROVIDER:groq}
+      # Used by whichever provider is active — only one runs at a time.
       api-key: ${VOICE_STT_API_KEY:}
-      # whisper-large-v3-turbo (fastest, cheapest) | whisper-large-v3
+      # groq only: whisper-large-v3-turbo (fastest, cheapest) | whisper-large-v3
       model: ${VOICE_STT_MODEL:whisper-large-v3-turbo}
+      # groq only.
       base-url: ${VOICE_STT_BASE_URL:https://api.groq.com/openai/v1}
+      # gemini only. Its API is neither multipart nor OpenAI-shaped, so it
+      # carries its own endpoint and model rather than overloading the two
+      # above — switching provider back and forth rewrites neither.
+      gemini-base-url: ${VOICE_STT_GEMINI_BASE_URL:https://generativelanguage.googleapis.com/v1beta}
+      gemini-model: ${VOICE_STT_GEMINI_MODEL:gemini-3.8-flash}
+      # Transcription is not a reasoning task and thinking only adds latency
+      # to a call a doctor is waiting on mid-examination.
+      gemini-thinking-level: ${VOICE_STT_GEMINI_THINKING_LEVEL:minimal}
       # Blank = detect the language per utterance, which is correct for
       # Moroccan clinicians who code-switch mid-sentence. Set to fr/ar/en
       # only to force it.
@@ -96,6 +113,27 @@ orthoflow:
       temperature: ${VOICE_STT_TEMPERATURE:0}
       timeout-ms: ${VOICE_STT_TIMEOUT_MS:15000}
       max-audio-bytes: ${VOICE_STT_MAX_AUDIO_BYTES:15728640}
+    # ── End-of-consultation summary ────────────────────────────────────
+    # The prose the dentist reads at review, generated from the session's own
+    # audit trail. Distinct from GET /voice/sessions/{id}/summary, which reads
+    # the clinical tables back and generates nothing. Off by default for the
+    # same reason as the NLU fallback: it sends what was dictated during a
+    # consultation to a third party. Nothing it produces reaches a clinical
+    # record without the dentist editing and saving it themselves.
+    summary:
+      enabled: ${VOICE_SUMMARY_ENABLED:false}
+      provider: ${VOICE_SUMMARY_PROVIDER:groq}
+      api-key: ${VOICE_SUMMARY_API_KEY:}
+      # A summary runs once per consultation, so latency is irrelevant and
+      # quality is not: the smaller models' French degrades noticeably on
+      # medical vocabulary.
+      model: ${VOICE_SUMMARY_MODEL:llama-3.3-70b-versatile}
+      base-url: ${VOICE_SUMMARY_BASE_URL:https://api.groq.com/openai/v1}
+      # The language the summary is written in, as a name the model knows.
+      language: ${VOICE_SUMMARY_LANGUAGE:French}
+      timeout-ms: ${VOICE_SUMMARY_TIMEOUT_MS:30000}
+      max-output-tokens: ${VOICE_SUMMARY_MAX_OUTPUT_TOKENS:1200}
+      max-commands: ${VOICE_SUMMARY_MAX_COMMANDS:200}
     audit:
       # Keeping the raw utterance lets a pilot measure recognition accuracy.
       # A production clinic generally should not store speech transcripts

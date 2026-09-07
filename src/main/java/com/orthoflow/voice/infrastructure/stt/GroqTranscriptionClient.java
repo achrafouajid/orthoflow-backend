@@ -33,7 +33,7 @@ import java.util.List;
  */
 @Component
 @Slf4j
-public class GroqTranscriptionClient {
+public class GroqTranscriptionClient implements TranscriptionProvider {
 
     private final SpeechToTextProperties properties;
     private final ObjectMapper objectMapper;
@@ -47,6 +47,12 @@ public class GroqTranscriptionClient {
                 .build();
     }
 
+    @Override
+    public String name() {
+        return "groq";
+    }
+
+    @Override
     public boolean isConfigured() {
         return properties.getApiKey() != null && !properties.getApiKey().isBlank()
                 && properties.getBaseUrl() != null && !properties.getBaseUrl().isBlank();
@@ -60,6 +66,7 @@ public class GroqTranscriptionClient {
      * @param languageOverride ISO-639-1 hint, or null/blank to auto-detect
      * @param prompt      optional bias text (spelling of names, terms); may be null
      */
+    @Override
     public TranscriptionResult transcribe(byte[] audio, String filename, String contentType,
                                           String languageOverride, String prompt) {
         if (!isConfigured()) {
