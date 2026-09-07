@@ -61,6 +61,31 @@ fi
 export "$TAG_VAR=$IMAGE_TAG"
 dc pull "$SERVICE"
 
+# Pin the service we are NOT deploying to the image it is already running.
+#
+# Without this, deploying one service silently rolls the other back. The tags
+# in docker-compose.yml default to `latest` (`${BACKEND_IMAGE_TAG:-latest}`),
+# and only the deployed service's tag variable is exported — so the `up -d`
+# below re-resolves the sibling from `:latest`, which is whatever stale copy
+# happens to be in the local image cache. `dc pull` only ever fetches the
+# service being deployed, so that cached `:latest` can be many deploys old.
+#
+# This bit for real: a frontend deploy reverted the backend to a build from
+# three hours earlier, and nothing failed — the container came up healthy on
+# the wrong code, and the deploy reported success.
+OTHER_SERVICE=$([ "$SERVICE" = backend ] && echo front || echo backend)
+OTHER_TAG_VAR=$([ "$SERVICE" = backend ] && echo FRONT_IMAGE_TAG || echo BACKEND_IMAGE_TAG)
+OTHER_CONTAINER="$(dc ps -q "$OTHER_SERVICE" 2>/dev/null || true)"
+if [ -n "$OTHER_CONTAINER" ]; then
+  OTHER_TAG="$(docker inspect -f '{{.Config.Image}}' "$OTHER_CONTAINER" 2>/dev/null | sed 's/.*://')"
+  # Only pin a real tag. Pinning `latest` would reintroduce the same problem,
+  # and an empty value would expand to an invalid image reference.
+  if [ -n "$OTHER_TAG" ] && [ "$OTHER_TAG" != latest ]; then
+    echo "Pinning $OTHER_SERVICE to its running image tag: $OTHER_TAG"
+    export "$OTHER_TAG_VAR=$OTHER_TAG"
+  fi
+fi
+
 # Full `up -d` so committed changes to db/labels are applied too; Compose only
 # recreates a service whose config or image digest actually changed.
 dc up -d
