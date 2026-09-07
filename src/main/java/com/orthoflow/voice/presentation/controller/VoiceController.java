@@ -5,9 +5,11 @@ import com.orthoflow.clinical.application.dto.PatientClinicalRecordResponse;
 import com.orthoflow.clinical.application.service.ClinicalRecordService;
 import com.orthoflow.clinical.domain.model.FindingCatalog;
 import com.orthoflow.voice.application.dto.*;
+import com.orthoflow.voice.application.service.SessionSummaryService;
 import com.orthoflow.voice.application.service.SpeechToTextService;
 import com.orthoflow.voice.application.service.VoiceAuditService;
 import com.orthoflow.voice.application.service.VoiceCommandService;
+import com.orthoflow.voice.application.service.VoiceSessionCommitService;
 import com.orthoflow.voice.application.service.VoiceSessionService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -42,6 +44,8 @@ public class VoiceController {
     private final ClinicalRecordService clinicalRecordService;
     private final VoiceAuditService voiceAuditService;
     private final SpeechToTextService speechToTextService;
+    private final SessionSummaryService sessionSummaryService;
+    private final VoiceSessionCommitService voiceSessionCommitService;
     private final CurrentUserProvider currentUserProvider;
 
     // ── Sessions ─────────────────────────────────────────────────────────
@@ -84,6 +88,43 @@ public class VoiceController {
     @GetMapping("/sessions/{sessionId}/summary")
     public PatientClinicalRecordResponse sessionSummary(@PathVariable UUID sessionId) {
         return clinicalRecordService.getSessionRecord(sessionId);
+    }
+
+    /**
+     * The generated narrative for this examination, built from the session's
+     * own audit trail.
+     *
+     * <p>Persists nothing, so the review page may call it as often as the
+     * dentist edits what is included. The text only reaches the record if they
+     * save it through {@link #commitSession}.
+     *
+     * <p>A response carrying {@code error} means no narrative could be
+     * produced — generation is off, unconfigured, or the provider was
+     * unreachable. The review page still renders the structured findings, so
+     * that is a degraded page, not a blocked one.
+     */
+    @PostMapping("/sessions/{sessionId}/summarize")
+    @PreAuthorize("hasAnyRole('DOCTOR', 'ADMIN')")
+    public SessionSummaryResponse summariseSession(@PathVariable UUID sessionId) {
+        return sessionSummaryService.summarise(sessionId);
+    }
+
+    /**
+     * Writes a reviewed examination to the clinical record — the only path by
+     * which a buffered session reaches the clinical tables.
+     *
+     * <p>Commands are named by audit id, never resent as values, so what
+     * executes is re-derived from what the server itself recorded and showed.
+     * Each one commits independently: the response reports what wrote, what
+     * was discarded, and what failed, and a commit with any failure leaves the
+     * session in {@code PENDING_REVIEW} rather than claiming it is saved.
+     */
+    @PostMapping("/sessions/{sessionId}/commit")
+    @PreAuthorize("hasAnyRole('DOCTOR', 'ADMIN')")
+    public CommitVoiceSessionResponse commitSession(
+            @PathVariable UUID sessionId,
+            @Valid @RequestBody CommitVoiceSessionRequest request) {
+        return voiceSessionCommitService.commit(sessionId, request, currentUserProvider.requireUserId());
     }
 
     // ── Commands ────────────────────────────────────────────────────────
@@ -131,11 +172,12 @@ public class VoiceController {
      * typed or browser-recognised utterance takes. Nothing is written to the
      * clinical record here.
      *
-     * <p>Only reached when the client has been switched to server-side
-     * capture; the browser's own {@code SpeechRecognition} is the default and
-     * calls none of this. When {@code orthoflow.voice.stt.enabled} is false or
-     * the provider is unreachable, the response carries an {@code error} tag
-     * and an empty transcript so the client falls back to its own recogniser.
+     * <p>The primary capture path. The browser records a clip and posts it
+     * here; its own {@code SpeechRecognition} remains as an offline fallback.
+     * When {@code orthoflow.voice.stt.enabled} is false or the provider is
+     * unreachable, the response carries an {@code error} tag and an empty
+     * transcript so the client falls back to that recogniser rather than
+     * losing the utterance.
      */
     @PostMapping(value = "/transcribe", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @PreAuthorize("hasAnyRole('DOCTOR', 'ADMIN')")

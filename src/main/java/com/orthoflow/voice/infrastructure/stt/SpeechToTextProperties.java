@@ -23,10 +23,14 @@ import org.springframework.stereotype.Component;
  * lawful basis, CNDP notification under Law 09-08). The API key is held here
  * on the server and never reaches the browser.
  *
- * <p>The default {@code base-url} targets Groq's OpenAI-compatible audio API;
- * any endpoint that implements {@code POST /audio/transcriptions} with the
- * same multipart shape (a self-hosted {@code faster-whisper} server, for
- * example) works by pointing {@code base-url} at it.
+ * <p>Two providers ship. {@code groq} targets Groq's OpenAI-compatible audio
+ * API, and any endpoint implementing {@code POST /audio/transcriptions} with
+ * the same multipart shape (a self-hosted {@code faster-whisper} server, for
+ * example) works by pointing {@code base-url} at it. {@code gemini} targets
+ * Google's Interactions API, which is not multipart and not OpenAI-shaped, so
+ * it carries its own {@code gemini-base-url} and {@code gemini-model} rather
+ * than overloading the two above — a deployment can switch {@code provider}
+ * back and forth without rewriting either provider's endpoint settings.
  */
 @Component
 @ConfigurationProperties(prefix = "orthoflow.voice.stt")
@@ -42,7 +46,7 @@ public class SpeechToTextProperties {
      */
     private boolean enabled = false;
 
-    /** {@code groq} is the only provider name recognised today. */
+    /** {@code groq} or {@code gemini}; anything else disables transcription. */
     private String provider = "groq";
 
     /** Held server-side only. Supplied via {@code VOICE_STT_API_KEY}. */
@@ -71,6 +75,31 @@ public class SpeechToTextProperties {
      */
     private double temperature = 0;
 
+    // ── Gemini ──────────────────────────────────────────────────────────
+
+    /**
+     * Gemini's Interactions API root, no trailing slash. The client appends
+     * {@code /interactions}.
+     */
+    private String geminiBaseUrl = "https://generativelanguage.googleapis.com/v1beta";
+
+    /**
+     * Gemini is a general multimodal model rather than a dedicated ASR model,
+     * which is the point: it transcribes French-with-Darija code-switching and
+     * clinical vocabulary noticeably better than Whisper does, because it can
+     * use the prompt as context rather than decoding phonemes in isolation.
+     * The cost is that it can be talked out of transcribing — see the system
+     * instruction in {@code GeminiTranscriptionClient}.
+     */
+    private String geminiModel = "gemini-3.8-flash";
+
+    /**
+     * How hard the model may think before answering. Transcription is not a
+     * reasoning task and thinking only adds latency to a call that sits in
+     * front of a doctor mid-examination.
+     */
+    private String geminiThinkingLevel = "minimal";
+
     private int timeoutMs = 15000;
 
     /**
@@ -80,4 +109,13 @@ public class SpeechToTextProperties {
      * examination-segment recording.
      */
     private long maxAudioBytes = 15L * 1024 * 1024;
+
+    /**
+     * The model name to report back to the client for whichever provider is
+     * active, so the browser's diagnostics name what actually ran rather than
+     * whatever the other provider's setting happens to hold.
+     */
+    public String activeModel() {
+        return "gemini".equalsIgnoreCase(provider) ? geminiModel : model;
+    }
 }
