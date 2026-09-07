@@ -17,9 +17,17 @@ import org.springframework.stereotype.Component;
  *
  * <p>Any OpenAI-compatible chat endpoint works. The default targets Groq,
  * which is where the deployment already holds a key, and the default model is
- * a 70B-class one on purpose: a summary runs once per consultation, so latency
- * is irrelevant and the smaller models' French degrades noticeably on medical
+ * a large one on purpose: a summary runs once per consultation, so latency is
+ * irrelevant and the smaller models' French degrades noticeably on medical
  * vocabulary.
+ *
+ * <p>{@code openai/gpt-oss-120b} rather than {@code llama-3.3-70b-versatile}:
+ * the Llama model is gated behind Groq's enterprise tier and a standard key
+ * gets a 404 from it, which would make the default configuration fail for most
+ * deployments. {@code qwen/qwen3.8-27b} is the other reasonable choice and in
+ * testing produced slightly better French clinical terminology, but the larger
+ * model follows the "report only what is here, invent nothing" instruction
+ * more reliably — and for a document a dentist signs, faithfulness beats idiom.
  */
 @Component
 @ConfigurationProperties(prefix = "orthoflow.voice.summary")
@@ -40,7 +48,7 @@ public class VoiceSummaryProperties {
 
     private String apiKey = "";
 
-    private String model = "llama-3.3-70b-versatile";
+    private String model = "openai/gpt-oss-120b";
 
     /** OpenAI-compatible chat root, no trailing slash. */
     private String baseUrl = "https://api.groq.com/openai/v1";

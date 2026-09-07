@@ -126,8 +126,9 @@ orthoflow:
       api-key: ${VOICE_SUMMARY_API_KEY:}
       # A summary runs once per consultation, so latency is irrelevant and
       # quality is not: the smaller models' French degrades noticeably on
-      # medical vocabulary.
-      model: ${VOICE_SUMMARY_MODEL:llama-3.3-70b-versatile}
+      # medical vocabulary. llama-3.3-70b-versatile is gated behind Groq's
+      # enterprise tier and 404s on a standard key, so it is not the default.
+      model: ${VOICE_SUMMARY_MODEL:openai/gpt-oss-120b}
       base-url: ${VOICE_SUMMARY_BASE_URL:https://api.groq.com/openai/v1}
       # The language the summary is written in, as a name the model knows.
       language: ${VOICE_SUMMARY_LANGUAGE:French}
